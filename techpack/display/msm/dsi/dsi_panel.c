@@ -39,6 +39,8 @@
 #endif /* OPLUS_FEATURE_ADFR */
 #include "sde_dbg.h"
 
+#include "exposure_adjustment.h"
+
 /**
  * topology is currently defined by a set of following 3 values:
  * 1. num of layer mixers
@@ -1562,10 +1564,14 @@ error:
 int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 {
 	int rc = 0;
+	int bl_dc_min = panel->bl_config.bl_min_level * 2;
 	struct dsi_backlight_config *bl = &panel->bl_config;
 
 	if (panel->host_config.ext_bridge_mode)
 		return 0;
+		
+	if (bl_lvl > 0)
+        bl_lvl = ea_panel_calc_backlight(bl_lvl < bl_dc_min ? bl_dc_min : bl_lvl);
 
 #ifdef OPLUS_BUG_STABILITY
 	/* Add for silence and sau reboot */
