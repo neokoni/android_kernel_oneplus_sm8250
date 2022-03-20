@@ -1247,6 +1247,7 @@ static bool zram_meta_alloc(struct zram *zram, u64 disksize)
 static void zram_free_page(struct zram *zram, size_t index)
 {
 	struct zram_entry *entry;
+	bool is_deduped;
 
 #ifdef CONFIG_ZRAM_MEMORY_TRACKING
 	zram->table[index].ac_time = 0;
@@ -1254,7 +1255,8 @@ static void zram_free_page(struct zram *zram, size_t index)
 	if (zram_test_flag(zram, index, ZRAM_IDLE))
 		zram_clear_flag(zram, index, ZRAM_IDLE);
 
-	if (zram_test_flag(zram, index, ZRAM_DEDUPED))
+	is_deduped = zram_test_flag(zram, index, ZRAM_DEDUPED);
+	if (is_deduped)
 		zram_clear_flag(zram, index, ZRAM_DEDUPED);
 
 	if (zram_test_flag(zram, index, ZRAM_HUGE)) {
@@ -1307,11 +1309,11 @@ static void zram_free_page(struct zram *zram, size_t index)
 
 	zram_entry_free(zram, entry);
 
-	atomic64_sub(zram_get_obj_size(zram, index),
-			&zram->stats.compr_data_size);
-	atomic64_dec(&zram->stats.pages_stored);
-
+	if (!is_deduped)
+		atomic64_sub(zram_get_obj_size(zram, index),
+			     &zram->stats.compr_data_size);
 out:
+	atomic64_dec(&zram->stats.pages_stored);
 	zram_set_entry(zram, index, NULL);
 	zram_set_obj_size(zram, index, 0);
 	WARN_ON_ONCE(zram->table[index].flags &
