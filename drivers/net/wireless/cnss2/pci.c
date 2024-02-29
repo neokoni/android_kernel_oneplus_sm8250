@@ -2422,7 +2422,6 @@ int cnss_wlan_register_driver(struct cnss_wlan_driver *driver_ops)
 	struct cnss_pci_data *pci_priv;
 	unsigned int timeout;
 	struct cnss_cal_info *cal_info;
-	u16 wlan_driver_delay_time = 1000;
 
 	if (!plat_priv) {
 		cnss_pr_err("plat_priv is NULL\n");
