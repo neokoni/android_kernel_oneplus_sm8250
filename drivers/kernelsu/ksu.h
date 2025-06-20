@@ -23,6 +23,9 @@
 #define CMD_UID_SHOULD_UMOUNT 13
 #define CMD_IS_SU_ENABLED 14
 #define CMD_ENABLE_SU 15
+#define CMD_ENABLE_KPM 100
+#define CMD_HOOK_TYPE 101
+#define CMD_GET_SUSFS_FEATURE_STATUS 102
 
 #define EVENT_POST_FS_DATA 1
 #define EVENT_BOOT_COMPLETED 2
@@ -33,6 +36,25 @@
 // NGROUPS_MAX for Linux is 65535 generally, but we only supports 32 groups.
 #define KSU_MAX_GROUPS 32
 #define KSU_SELINUX_DOMAIN 64
+
+// SUSFS Functional State Structures
+struct susfs_feature_status {
+	bool status_sus_path;
+	bool status_sus_mount;
+	bool status_auto_default_mount;
+	bool status_auto_bind_mount;
+	bool status_sus_kstat;
+	bool status_try_umount;
+	bool status_auto_try_umount_bind;
+	bool status_spoof_uname;
+	bool status_enable_log;
+	bool status_hide_symbols;
+	bool status_spoof_cmdline;
+	bool status_open_redirect;
+	bool status_magic_mount;
+	bool status_overlayfs_auto_kstat;
+	bool status_sus_su;
+};
 
 struct root_profile {
 	int32_t uid;
