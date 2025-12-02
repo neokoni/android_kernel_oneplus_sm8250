@@ -18,6 +18,7 @@
 #include <linux/mm_types.h>
 #include <linux/wait.h>
 #include <linux/u64_stats_sync.h>
+#include <linux/uaccess.h>
 #include <linux/refcount.h>
 #include <linux/mutex.h>
 #include <linux/module.h>
@@ -1092,13 +1093,22 @@ int bpf_prog_array_copy(struct bpf_prog_array *old_array,
 		struct bpf_prog *_prog;			\
 		struct bpf_prog_array *_array;		\
 		u32 _ret = 1;				\
+		u32 _cnt = 0;				\
 		migrate_disable();			\
 		rcu_read_lock();			\
 		_array = rcu_dereference(array);	\
 		if (unlikely(check_non_null && !_array))\
 			goto _out;			\
 		_item = &_array->items[0];		\
-		while ((_prog = READ_ONCE(_item->prog))) {		\
+		while (_cnt < 64) {			\
+			if (unlikely(!_item || (unsigned long)_item < (unsigned long)_array || \
+			    (unsigned long)_item > (unsigned long)_array + PAGE_SIZE * 2)) \
+				break;			\
+			if (probe_kernel_read(&_prog, &_item->prog, sizeof(_prog))) \
+				break;			\
+			if (!_prog || (unsigned long)_prog < PAGE_SIZE || \
+			    ((unsigned long)_prog & 0xffff000000000000) == 0xdead000000000000) \
+				break;			\
 			if (!set_cg_storage) {			\
 				_ret &= func(_prog, ctx);	\
 			} else {				\
@@ -1108,6 +1118,7 @@ int bpf_prog_array_copy(struct bpf_prog_array *old_array,
 				bpf_cgroup_storage_unset();	\
 			}				\
 			_item++;			\
+			_cnt++;				\
 		}					\
 _out:							\
 		rcu_read_unlock();			\
@@ -1145,11 +1156,20 @@ _out:							\
 		u32 ret;				\
 		u32 _ret = 1;				\
 		u32 _cn = 0;				\
+		u32 _cnt = 0;				\
 		migrate_disable();			\
 		rcu_read_lock();			\
 		_array = rcu_dereference(array);	\
 		_item = &_array->items[0];		\
-		while ((_prog = READ_ONCE(_item->prog))) {		\
+		while (_cnt < 64) {			\
+			if (unlikely(!_item || (unsigned long)_item < (unsigned long)_array || \
+			    (unsigned long)_item > (unsigned long)_array + PAGE_SIZE * 2)) \
+				break;			\
+			if (probe_kernel_read(&_prog, &_item->prog, sizeof(_prog))) \
+				break;			\
+			if (!_prog || (unsigned long)_prog < PAGE_SIZE || \
+			    ((unsigned long)_prog & 0xffff000000000000) == 0xdead000000000000) \
+				break;			\
 			if (unlikely(bpf_cgroup_storage_set(_item->cgroup_storage)))	\
 				break;			\
 			ret = func(_prog, ctx);		\
@@ -1157,6 +1177,7 @@ _out:							\
 			_ret &= (ret & 1);		\
 			_cn |= (ret & 2);		\
 			_item++;			\
+			_cnt++;				\
 		}					\
 		rcu_read_unlock();			\
 		migrate_enable();			\
