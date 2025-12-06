@@ -1040,7 +1040,7 @@ int __cgroup_bpf_run_filter_skb(struct sock *sk,
 				struct sk_buff *skb,
 				enum bpf_attach_type type)
 {
-	unsigned int offset = skb->data - skb_network_header(skb);
+	unsigned int offset;
 	struct sock *save_sk;
 	void *saved_data_end;
 	struct bpf_prog_array *prog_array;
@@ -1049,6 +1049,11 @@ int __cgroup_bpf_run_filter_skb(struct sock *sk,
 
 	if (!sk || !sk_fullsock(sk))
 		return 0;
+
+	if (unlikely(!skb || skb->head == LIST_POISON1))
+		return 0;
+
+	offset = skb->data - skb_network_header(skb);
 
 	if (sk->sk_family != AF_INET && sk->sk_family != AF_INET6)
 		return 0;
@@ -1069,14 +1074,24 @@ int __cgroup_bpf_run_filter_skb(struct sock *sk,
 		return 0;
 	}
 
+	if (unlikely(!skb || skb->sk == LIST_POISON1))
+		return 0;
+
 	save_sk = skb->sk;
 	skb->sk = sk;
+
+	if (unlikely(!skb || skb->data == LIST_POISON1))
+		return 0;
 	__skb_push(skb, offset);
 
 	/* compute pointers for the bpf prog */
+	if (unlikely(!skb || skb->data == LIST_POISON1))
+		return 0;
 	bpf_compute_and_save_data_end(skb, &saved_data_end);
 
 	/* Use the validated prog_array instead of accessing cgrp->bpf.effective directly */
+	if (unlikely(!skb || skb->data == LIST_POISON1))
+		return 0;
 	if (type == BPF_CGROUP_INET_EGRESS) {
 		ret = BPF_PROG_CGROUP_INET_EGRESS_RUN_ARRAY(
 			prog_array, skb, __bpf_prog_run_save_cb);
@@ -1087,7 +1102,11 @@ int __cgroup_bpf_run_filter_skb(struct sock *sk,
 	}
 	
 	rcu_read_unlock();
+	if (unlikely(!skb || skb->cb == LIST_POISON1))
+		return 0;
 	bpf_restore_data_end(skb, saved_data_end);
+	if (unlikely(!skb || skb->data == LIST_POISON1))
+		return 0;
 	__skb_pull(skb, offset);
 	skb->sk = save_sk;
 
