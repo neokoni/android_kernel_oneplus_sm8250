@@ -1092,8 +1092,6 @@ int __cgroup_bpf_run_filter_skb(struct sock *sk,
 	/* Use the validated prog_array instead of accessing cgrp->bpf.effective directly */
 	if (unlikely(!skb || skb->data == LIST_POISON1))
 		return 0;
-	if (unlikely(!prog_array || prog_array->items == LIST_POISON1))
-		return 0;
 	if (type == BPF_CGROUP_INET_EGRESS) {
 		ret = BPF_PROG_CGROUP_INET_EGRESS_RUN_ARRAY(
 			prog_array, skb, __bpf_prog_run_save_cb);
