@@ -45,7 +45,7 @@ static DEFINE_IDR(zram_index_idr);
 static DEFINE_MUTEX(zram_index_mutex);
 
 static int zram_major;
-static const char *default_compressor = CONFIG_ZRAM_DEF_COMP;
+static const char *default_compressor = "lzo";
 
 /* Module params (documentation at end) */
 static unsigned int num_devices = 1;
@@ -244,8 +244,18 @@ static ssize_t idle_store(struct device *dev,
 	struct zram *zram = dev_to_zram(dev);
 	unsigned long nr_pages = zram->disksize >> PAGE_SHIFT;
 	int index;
+	char mode_buf[8];
+	ssize_t sz;
 
-	if (!sysfs_streq(buf, "all"))
+	sz = strscpy(mode_buf, buf, sizeof(mode_buf));
+	if (sz <= 0)
+		return -EINVAL;
+
+	/* ignore trailing new line */
+	if (mode_buf[sz - 1] == '\n')
+		mode_buf[sz - 1] = 0x00;
+
+	if (strcmp(mode_buf, "all"))
 		return -EINVAL;
 
 	down_read(&zram->init_lock);
@@ -445,10 +455,9 @@ static ssize_t backing_dev_store(struct device *dev,
 		goto out;
 	}
 
-	bdev = blkdev_get_by_dev(inode->i_rdev,
-			FMODE_READ | FMODE_WRITE | FMODE_EXCL, zram);
-	if (IS_ERR(bdev)) {
-		err = PTR_ERR(bdev);
+	bdev = bdgrab(I_BDEV(inode));
+	err = blkdev_get(bdev, FMODE_READ | FMODE_WRITE | FMODE_EXCL, zram);
+	if (err < 0) {
 		bdev = NULL;
 		goto out;
 	}
@@ -579,9 +588,6 @@ static int read_from_bdev_async(struct zram *zram, struct bio_vec *bvec,
 	return 1;
 }
 
-#define PAGE_WB_SIG "page_index="
-
-#define PAGE_WRITEBACK 0
 #define HUGE_WRITEBACK 1
 #define IDLE_WRITEBACK 2
 
@@ -590,29 +596,30 @@ static ssize_t writeback_store(struct device *dev,
 {
 	struct zram *zram = dev_to_zram(dev);
 	unsigned long nr_pages = zram->disksize >> PAGE_SHIFT;
-	unsigned long index = 0;
+	unsigned long index;
 	struct bio bio;
 	struct bio_vec bio_vec;
 	struct page *page;
-	ssize_t ret;
-	int mode, err;
+	ssize_t ret, sz;
+	char mode_buf[8];
+	int mode = -1;
 	unsigned long blk_idx = 0;
 
-	if (sysfs_streq(buf, "idle"))
+	sz = strscpy(mode_buf, buf, sizeof(mode_buf));
+	if (sz <= 0)
+		return -EINVAL;
+
+	/* ignore trailing newline */
+	if (mode_buf[sz - 1] == '\n')
+		mode_buf[sz - 1] = 0x00;
+
+	if (!strcmp(mode_buf, "idle"))
 		mode = IDLE_WRITEBACK;
-	else if (sysfs_streq(buf, "huge"))
+	else if (!strcmp(mode_buf, "huge"))
 		mode = HUGE_WRITEBACK;
-	else {
-		if (strncmp(buf, PAGE_WB_SIG, sizeof(PAGE_WB_SIG) - 1))
-			return -EINVAL;
 
-		if (kstrtol(buf + sizeof(PAGE_WB_SIG) - 1, 10, &index) ||
-				index >= nr_pages)
-			return -EINVAL;
-
-		nr_pages = 1;
-		mode = PAGE_WRITEBACK;
-	}
+	if (mode == -1)
+		return -EINVAL;
 
 	down_read(&zram->init_lock);
 	if (!init_done(zram)) {
@@ -631,7 +638,7 @@ static ssize_t writeback_store(struct device *dev,
 		goto release_init_lock;
 	}
 
-	for (; nr_pages != 0; index++, nr_pages--) {
+	for (index = 0; index < nr_pages; index++) {
 		struct bio_vec bvec;
 
 		bvec.bv_page = page;
@@ -660,7 +667,6 @@ static ssize_t writeback_store(struct device *dev,
 
 		if (zram_test_flag(zram, index, ZRAM_WB) ||
 				zram_test_flag(zram, index, ZRAM_SAME) ||
-				zram_test_flag(zram, index, ZRAM_DEDUPED) ||
 				zram_test_flag(zram, index, ZRAM_UNDER_WB))
 			goto next;
 
@@ -697,17 +703,12 @@ static ssize_t writeback_store(struct device *dev,
 		 * XXX: A single page IO would be inefficient for write
 		 * but it would be not bad as starter.
 		 */
-		err = submit_bio_wait(&bio);
-		if (err) {
+		ret = submit_bio_wait(&bio);
+		if (ret) {
 			zram_slot_lock(zram, index);
 			zram_clear_flag(zram, index, ZRAM_UNDER_WB);
 			zram_clear_flag(zram, index, ZRAM_IDLE);
 			zram_slot_unlock(zram, index);
-			/*
-			 * Return last IO error unless every IO were
-			 * not suceeded.
-			 */
-			ret = err;
 			continue;
 		}
 
@@ -873,14 +874,13 @@ static ssize_t read_block_state(struct file *file, char __user *buf,
 
 		ts = ktime_to_timespec64(zram->table[index].ac_time);
 		copied = snprintf(kbuf + written, count,
-			"%12zd %12lld.%06lu %c%c%c%c%c\n",
+			"%12zd %12lld.%06lu %c%c%c%c\n",
 			index, (s64)ts.tv_sec,
 			ts.tv_nsec / NSEC_PER_USEC,
 			zram_test_flag(zram, index, ZRAM_SAME) ? 's' : '.',
 			zram_test_flag(zram, index, ZRAM_WB) ? 'w' : '.',
 			zram_test_flag(zram, index, ZRAM_HUGE) ? 'h' : '.',
-			zram_test_flag(zram, index, ZRAM_IDLE) ? 'i' : '.',
-			zram_test_flag(zram, index, ZRAM_DEDUPED) ? 'd' : '.');
+			zram_test_flag(zram, index, ZRAM_IDLE) ? 'i' : '.');
 
 		if (count <= copied) {
 			zram_slot_unlock(zram, index);
@@ -1086,7 +1086,7 @@ static ssize_t mm_stat_show(struct device *dev,
 	max_used = atomic_long_read(&zram->stats.max_used_pages);
 
 	ret = scnprintf(buf, PAGE_SIZE,
-			"%8llu %8llu %8llu %8lu %8ld %8llu %8lu %8llu %8llu %8llu %8llu\n",
+			"%8llu %8llu %8llu %8lu %8ld %8llu %8lu %8llu %8llu %8llu\n",
 			orig_size << PAGE_SHIFT,
 			(u64)atomic64_read(&zram->stats.compr_data_size),
 			mem_used << PAGE_SHIFT,
@@ -1095,7 +1095,6 @@ static ssize_t mm_stat_show(struct device *dev,
 			(u64)atomic64_read(&zram->stats.same_pages),
 			atomic_long_read(&pool_stats.pages_compacted),
 			(u64)atomic64_read(&zram->stats.huge_pages),
-			(u64)atomic64_read(&zram->stats.huge_pages_since),
 			zram_dedup_dup_size(zram),
 			zram_dedup_meta_size(zram));
 	up_read(&zram->init_lock);
@@ -1247,17 +1246,12 @@ static bool zram_meta_alloc(struct zram *zram, u64 disksize)
 static void zram_free_page(struct zram *zram, size_t index)
 {
 	struct zram_entry *entry;
-	bool is_deduped;
 
 #ifdef CONFIG_ZRAM_MEMORY_TRACKING
 	zram->table[index].ac_time = 0;
 #endif
 	if (zram_test_flag(zram, index, ZRAM_IDLE))
 		zram_clear_flag(zram, index, ZRAM_IDLE);
-
-	is_deduped = zram_test_flag(zram, index, ZRAM_DEDUPED);
-	if (is_deduped)
-		zram_clear_flag(zram, index, ZRAM_DEDUPED);
 
 	if (zram_test_flag(zram, index, ZRAM_HUGE)) {
 		zram_clear_flag(zram, index, ZRAM_HUGE);
@@ -1309,11 +1303,11 @@ static void zram_free_page(struct zram *zram, size_t index)
 
 	zram_entry_free(zram, entry);
 
-	if (!is_deduped)
-		atomic64_sub(zram_get_obj_size(zram, index),
-			     &zram->stats.compr_data_size);
-out:
+	atomic64_sub(zram_get_obj_size(zram, index),
+			&zram->stats.compr_data_size);
 	atomic64_dec(&zram->stats.pages_stored);
+
+out:
 	zram_set_entry(zram, index, NULL);
 	zram_set_obj_size(zram, index, 0);
 	WARN_ON_ONCE(zram->table[index].flags &
@@ -1576,7 +1570,6 @@ static int __zram_bvec_write(struct zram *zram, struct bio_vec *bvec,
 
 	entry = zram_dedup_find(zram, page, &checksum);
 	if (entry) {
-		flags = ZRAM_DEDUPED;
 		comp_len = entry->len;
 		goto out;
 	}
@@ -1677,18 +1670,12 @@ out:
 	if (comp_len == PAGE_SIZE) {
 		zram_set_flag(zram, index, ZRAM_HUGE);
 		atomic64_inc(&zram->stats.huge_pages);
-		atomic64_inc(&zram->stats.huge_pages_since);
 	}
 
-	switch (flags) {
-	case ZRAM_SAME:
+	if (flags) {
 		zram_set_flag(zram, index, flags);
 		zram_set_element(zram, index, element);
-		break;
-	case ZRAM_DEDUPED:
-		zram_set_flag(zram, index, flags);
-		// Fallthrough
-	default:
+	}  else {
 		zram_set_entry(zram, index, entry);
 		zram_set_obj_size(zram, index, comp_len);
 	}
@@ -2231,9 +2218,6 @@ static int zram_add(void)
 #ifdef CONFIG_ZRAM_WRITEBACK
 	spin_lock_init(&zram->wb_limit_lock);
 #endif
-#ifdef CONFIG_ZRAM_DEDUP
-	zram->use_dedup = true;
-#endif
 	queue = blk_alloc_queue(GFP_KERNEL);
 	if (!queue) {
 		pr_err("Error allocating disk queue for device %d\n",
@@ -2435,8 +2419,6 @@ static void destroy_devices(void)
 static int __init zram_init(void)
 {
 	int ret;
-
-	BUILD_BUG_ON(__NR_ZRAM_PAGEFLAGS > BITS_PER_LONG);
 
 	ret = cpuhp_setup_state_multi(CPUHP_ZCOMP_PREPARE, "block/zram:prepare",
 				      zcomp_cpu_up_prepare, zcomp_cpu_dead);
