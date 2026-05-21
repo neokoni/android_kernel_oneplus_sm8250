@@ -2,7 +2,7 @@
 	oplus_sensor {
 		compatible = "oplus,sensor-devinfo";
 
-		als-row-coe = <116>;
+		als-row-coe = <466>;
 
 		/* enum {LSM6DSM = 0x01, BMI160 = 0x02, LSM6DS3 = 0x04, BMI260 = 0x8}; */
 		gsensor@0 {
@@ -48,10 +48,10 @@
 			sensor-type = <3>; // OPLUS_LIGHT
 			bus-number = <5>;
 			irq-number = <122>;
-			als-type = <3>; // 1 - normal; 2 - under screen; 3 - normal needed compensation
+			als-type = <2>; // 1 - normal; 2 - under screen; 3 - normal needed compensation
 			is-unit-device = <1>; // 1 - alsps unit device; 0 - separate device
 			is-als-dri = <0>; // 0 - polling; 1 - irq
-			als-factor = <116>;
+			als-factor = <466>;
 			is_als_initialed = <0>;
 			als_buffer_length = <10>;
 		};
