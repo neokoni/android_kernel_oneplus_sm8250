@@ -1,6 +1,21 @@
 Linux kernel
 ============
 
+> ⚠️ **WARNING**
+> 
+> For OnePlus 9R (lemonades), the kernel configuration has been modified
+> to expose the HBM (High Brightness Mode) brightness range of the
+> display. This is intended for use with a device tree that takes this
+> into account either by disabling the entire HBM range or properly
+> configuring HBM transition point. Failing to do this may result in
+> staying in the HBM range for too long and damaging the display hardware.
+>
+> Brightness of the recovery might also need to be tuned to avoid making
+> the screen too bright.
+>
+> Beware that up to 2026-05-27, most custom ROMs (including official
+> LineageOS) has not yet implemented this for OnePlus 9R.
+
 There are several guides for kernel developers and users. These guides can
 be rendered in a number of formats, like HTML and PDF. Please read
 Documentation/admin-guide/README.rst first.
