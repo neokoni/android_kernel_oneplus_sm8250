@@ -7568,7 +7568,8 @@ irqreturn_t typec_state_change_irq_handler(int irq, void *data)
 #endif
 
 #ifdef OPLUS_FEATURE_CHG_BASIC
-	if (chg->typec_present == false && gpio_get_value(chg->ccdetect_gpio) == 1)
+	if (chg->typec_mode == POWER_SUPPLY_TYPEC_NONE &&
+	    chg->typec_present == false && gpio_get_value(chg->ccdetect_gpio) == 1)
 		if (oplus_ccdetect_get_power_role() != POWER_SUPPLY_TYPEC_PR_SINK &&
 		    oplus_get_otg_switch_status() == false)
 			oplus_ccdetect_disable();
@@ -8303,16 +8304,36 @@ static void smblib_pr_lock_clear_work(struct work_struct *work)
 }
 
 #ifdef OPLUS_FEATURE_CHG_BASIC
+#define CCDETECT_DELAY_MS 50
 static void oplus_ccdetect_work(struct work_struct *work)
 {
 	struct smb_charger *chg = container_of(work, struct smb_charger, ccdetect_work.work);
-	int level;
+	int level, confirm_level, rc;
+	u8 stat = 0;
 
 	level = gpio_get_value(chg->ccdetect_gpio);
+	msleep(20);
+	confirm_level = gpio_get_value(chg->ccdetect_gpio);
+	if (level != confirm_level) {
+		printk(KERN_ERR "[OPLUS_CHG][%s]: ccdetect_gpio unstable, reschedule work\n", __func__);
+		schedule_delayed_work(&chg->ccdetect_work, msecs_to_jiffies(CCDETECT_DELAY_MS));
+		return;
+	}
+
 	if (level != 1) {
 		oplus_ccdetect_enable();
 		oplus_wake_up_usbtemp_thread();
 	} else {
+		rc = smblib_read(chg, TYPE_C_STATE_MACHINE_STATUS_REG, &stat);
+		if (rc < 0) {
+			smblib_err(chg, "Couldn't read TYPE_C_STATE_MACHINE_STATUS_REG rc=%d\n", rc);
+		} else if (stat & TYPEC_ATTACH_DETACH_STATE_BIT) {
+			printk(KERN_ERR "[OPLUS_CHG][%s]: ignore ccdetect high while typec attached, stat=0x%x\n",
+			       __func__, stat);
+			vote(chg->awake_votable, CCDETECT_VOTER, false, 0);
+			return;
+		}
+
 		oplus_chg_clear_abnormal_adapter_var();
 		if (oplus_ccdetect_get_power_role() != POWER_SUPPLY_TYPEC_PR_SINK &&
 		    oplus_get_otg_switch_status() == false)
@@ -10426,7 +10447,6 @@ int oplus_ccdetect_support_check(void)
 }
 EXPORT_SYMBOL(oplus_ccdetect_support_check);
 #ifdef OPLUS_FEATURE_CHG_BASIC
-#define CCDETECT_DELAY_MS 50
 irqreturn_t oplus_ccdetect_change_handler(int irq, void *data)
 {
 	struct oplus_chg_chip *chip = data;
